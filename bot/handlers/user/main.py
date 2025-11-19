@@ -25,8 +25,6 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     InputFile,
-    InputMediaPhoto,
-    InputMediaVideo,
 )
 from aiogram.utils.exceptions import (
     MessageNotModified,
@@ -115,67 +113,24 @@ async def _send_media_bundle(bot, chat_id: int, attachments: list[str], caption:
         await bot.send_message(chat_id, caption, parse_mode=parse_mode)
         return
 
-    caption_used = False
-
-    def _chunk(seq: list[str], size: int = 10) -> list[list[str]]:
-        return [seq[i:i + size] for i in range(0, len(seq), size)]
-
     def _media_type(path: str) -> str:
         return 'video' if path.lower().endswith('.mp4') else 'photo'
 
-    def _send_single(path: str, caption_here: str | None) -> None:
+    async def _send_single(path: str, caption_here: str | None) -> None:
         if not os.path.isfile(path):
             logger.error(f"Missing media file for delivery: {path}")
-            return None
+            return
+        input_file = InputFile(path)
         if _media_type(path) == 'video':
-            return bot.send_video(chat_id, InputFile(path), caption=caption_here, parse_mode=parse_mode)
-        return bot.send_photo(chat_id, InputFile(path), caption=caption_here, parse_mode=parse_mode)
-
-    def _build_inputs(paths: list[str], caption_here: str | None) -> list:
-        media_list = []
-        for idx, path in enumerate(paths):
-            if not os.path.isfile(path):
-                logger.error(f"Missing media file for delivery: {path}")
-                continue
-            apply_caption = caption_here if idx == 0 else None
-            kwargs = {
-                'media': InputFile(path),
-                'caption': apply_caption,
-                'parse_mode': parse_mode if apply_caption else None,
-            }
-            if _media_type(path) == 'video':
-                media_list.append(InputMediaVideo(**kwargs))
-            else:
-                media_list.append(InputMediaPhoto(**kwargs))
-        return media_list
-
-    batch: list[str] = []
-    for path in attachments:
-        if not batch:
-            batch.append(path)
-            continue
-        if _media_type(path) == _media_type(batch[0]) and len(batch) < 10:
-            batch.append(path)
-            continue
-
-        album_caption = None if caption_used else caption
-        if len(batch) == 1:
-            await _send_single(batch[0], album_caption)
+            await bot.send_video(chat_id, input_file, caption=caption_here, parse_mode=parse_mode if caption_here else None)
         else:
-            media_group = _build_inputs(batch, album_caption)
-            if media_group:
-                await bot.send_media_group(chat_id, media_group)
-        caption_used = caption_used or album_caption is not None
-        batch = [path]
+            await bot.send_photo(chat_id, input_file, caption=caption_here, parse_mode=parse_mode if caption_here else None)
 
-    if batch:
-        album_caption = None if caption_used else caption
-        if len(batch) == 1:
-            await _send_single(batch[0], album_caption)
-        else:
-            media_group = _build_inputs(batch, album_caption)
-            if media_group:
-                await bot.send_media_group(chat_id, media_group)
+    caption_used = False
+    for idx, path in enumerate(attachments):
+        apply_caption = caption if not caption_used and idx == 0 else None
+        await _send_single(path, apply_caption)
+        caption_used = caption_used or apply_caption is not None
 
 
 async def request_feedback(bot, user_id: int, lang: str, item_name: str) -> None:
@@ -2118,6 +2073,18 @@ async def confirm_buy_callback_handler(call: CallbackQuery):
         price = round(price * 0.75, 2)
 
     lang = get_user_language(user_id) or 'en'
+    if not get_item_value(item_name):
+        await call.answer('❌ Item out of stock', show_alert=True)
+        await bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text='❌ Item out of stock',
+            reply_markup=back(f'item_{item_name}')
+        )
+        TgConfig.STATE.pop(f'{user_id}_promo_applied', None)
+        TgConfig.STATE.pop(f'{user_id}_pending_item', None)
+        TgConfig.STATE.pop(f'{user_id}_price', None)
+        return
     TgConfig.STATE[user_id] = None
     TgConfig.STATE.pop(f'{user_id}_promo_applied', None)
     TgConfig.STATE[f'{user_id}_pending_item'] = item_name
@@ -2523,12 +2490,20 @@ async def purchase_crypto_payment(call: CallbackQuery):
     value_data = get_item_value(item_name)
     if not value_data:
         notice = _reservation_or_stock_notice(item_name, lang)
-        await bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=notice,
-            reply_markup=back(f'item_{item_name}')
-        )
+        await call.answer(notice, show_alert=True)
+        try:
+            await bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=notice,
+                reply_markup=back(f'item_{item_name}')
+            )
+        except Exception:
+            await bot.send_message(
+                user_id,
+                notice,
+                reply_markup=back(f'item_{item_name}')
+            )
         TgConfig.STATE.pop(f'{user_id}_pending_item', None)
         TgConfig.STATE.pop(f'{user_id}_price', None)
         TgConfig.STATE.pop(f'{user_id}_promo_applied', None)
