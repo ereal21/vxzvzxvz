@@ -114,22 +114,34 @@ async def _send_media_bundle(bot, chat_id: int, attachments: list[str], caption:
         return
 
     def _media_type(path: str) -> str:
-        return 'video' if path.lower().endswith('.mp4') else 'photo'
+        lowered = path.lower()
+        if lowered.endswith(('.mp4', '.mov', '.mkv', '.avi')):
+            return 'video'
+        if lowered.endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+            return 'photo'
+        return 'document'
 
     async def _send_single(path: str, caption_here: str | None) -> None:
         if not os.path.isfile(path):
             logger.error(f"Missing media file for delivery: {path}")
             return
         input_file = InputFile(path)
-        if _media_type(path) == 'video':
+        media_type = _media_type(path)
+        if media_type == 'video':
             await bot.send_video(chat_id, input_file, caption=caption_here, parse_mode=parse_mode if caption_here else None)
-        else:
+        elif media_type == 'photo':
             await bot.send_photo(chat_id, input_file, caption=caption_here, parse_mode=parse_mode if caption_here else None)
+        else:
+            await bot.send_document(chat_id, input_file, caption=caption_here, parse_mode=parse_mode if caption_here else None)
 
     caption_used = False
     for idx, path in enumerate(attachments):
         apply_caption = caption if not caption_used and idx == 0 else None
-        await _send_single(path, apply_caption)
+        try:
+            await _send_single(path, apply_caption)
+        except Exception as e:
+            logger.error(f"Failed to send media {path} to {chat_id}: {e}")
+            continue
         caption_used = caption_used or apply_caption is not None
 
 

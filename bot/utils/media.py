@@ -80,7 +80,7 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
             [
                 os.path.join(folder, f)
                 for f in os.listdir(folder)
-                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4'))
+                if os.path.isfile(os.path.join(folder, f))
                 and not f.endswith('.meta.json')
                 and not f.endswith('.txt')
             ]
