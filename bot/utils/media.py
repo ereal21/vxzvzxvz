@@ -16,6 +16,30 @@ def _resolve_base_path(value: str) -> str:
     return value
 
 
+def _normalize_media_paths(base_path: str, media: list[str]) -> list[str]:
+    """Return existing media paths resolved relative to ``base_path``."""
+
+    base_dir = os.path.dirname(base_path)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for entry in media:
+        if not entry:
+            continue
+        candidates = []
+        if os.path.isabs(entry):
+            candidates.append(entry)
+        candidates.append(os.path.join(base_dir, entry))
+        candidates.append(os.path.join(base_dir, os.path.basename(entry)))
+        for candidate in candidates:
+            if candidate in seen:
+                break
+            if os.path.isfile(candidate):
+                normalized.append(candidate)
+                seen.add(candidate)
+                break
+    return normalized
+
+
 def load_media_bundle(value: str) -> Tuple[List[str], str]:
     """Return media paths and description for a stock value.
 
@@ -34,7 +58,7 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
         try:
             with open(meta_path, encoding='utf-8') as f:
                 meta = json.load(f)
-            attachments = [p for p in meta.get('media', []) if p]
+            attachments = _normalize_media_paths(base_path, meta.get('media', []))
             description = meta.get('description') or ''
         except Exception:
             pass
@@ -52,8 +76,8 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
                 ]
             )
 
-    if not attachments and base_path and os.path.isfile(base_path):
-        attachments = [base_path]
+    if base_path and os.path.isfile(base_path) and base_path not in attachments:
+        attachments.insert(0, base_path)
 
     if not description:
         desc_file = f"{base_path}.txt"
