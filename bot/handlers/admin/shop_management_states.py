@@ -62,7 +62,7 @@ from bot.utils.stock_notify import notify_restock
 from bot.utils.media import write_media_meta
 
 
-from bot.utils.files import cleanup_item_file, get_next_file_path
+from bot.utils.files import cleanup_item_file, create_stock_folder, get_next_file_path
 from bot.database.models import Permission
 from bot.handlers.other import get_bot_user_ids
 from bot.keyboards import (
@@ -767,7 +767,11 @@ async def assign_photo_receive_media(message: Message):
     else:
         await bot.send_message(user_id, t(lang, 'assign_media_invalid'))
         return
-    stock_path = get_next_file_path(item, ext)
+    stock_folder = TgConfig.STATE.get(f'{user_id}_stock_folder')
+    if not stock_folder:
+        stock_folder = create_stock_folder(item)
+        TgConfig.STATE[f'{user_id}_stock_folder'] = stock_folder
+    stock_path = get_next_file_path(item, ext, folder=stock_folder)
     await file.download(destination_file=stock_path)
     stock_paths = TgConfig.STATE.get(f'{user_id}_stock_paths', [])
     stock_paths.append(stock_path)
@@ -817,6 +821,7 @@ async def assign_photo_cancel_handler(call: CallbackQuery):
         return
     category = TgConfig.STATE.pop(f'{user_id}_assign_category', None)
     stock_paths = TgConfig.STATE.pop(f'{user_id}_stock_paths', [])
+    TgConfig.STATE.pop(f'{user_id}_stock_folder', None)
     for file_path in stock_paths:
         cleanup_item_file(file_path)
     TgConfig.STATE.pop(f'{user_id}_item', None)
@@ -860,6 +865,7 @@ async def assign_photo_receive_desc(message: Message):
     lang = _get_lang(user_id)
     TgConfig.STATE[user_id] = None
     TgConfig.STATE.pop(f'{user_id}_stock_paths', None)
+    TgConfig.STATE.pop(f'{user_id}_stock_folder', None)
     TgConfig.STATE.pop(f'{user_id}_item', None)
     TgConfig.STATE.pop(f'{user_id}_assign_category', None)
     TgConfig.STATE.pop(f'{user_id}_message_id', None)
