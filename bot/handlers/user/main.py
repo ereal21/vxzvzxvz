@@ -2523,12 +2523,20 @@ async def purchase_crypto_payment(call: CallbackQuery):
     value_data = get_item_value(item_name)
     if not value_data:
         notice = _reservation_or_stock_notice(item_name, lang)
-        await bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=notice,
-            reply_markup=back(f'item_{item_name}')
-        )
+        await call.answer(notice, show_alert=True)
+        try:
+            await bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=notice,
+                reply_markup=back(f'item_{item_name}')
+            )
+        except Exception:
+            await bot.send_message(
+                user_id,
+                notice,
+                reply_markup=back(f'item_{item_name}')
+            )
         TgConfig.STATE.pop(f'{user_id}_pending_item', None)
         TgConfig.STATE.pop(f'{user_id}_price', None)
         TgConfig.STATE.pop(f'{user_id}_promo_applied', None)
