@@ -58,7 +58,14 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
         try:
             with open(meta_path, encoding='utf-8') as f:
                 meta = json.load(f)
-            attachments = _normalize_media_paths(base_path, meta.get('media', []))
+            raw_media = meta.get('media', [])
+            attachments = _normalize_media_paths(base_path, raw_media)
+            if len(attachments) < len(raw_media):
+                base_dir = os.path.dirname(base_path)
+                for entry in raw_media:
+                    candidate = os.path.join(base_dir, os.path.basename(entry))
+                    if candidate not in attachments and os.path.isfile(candidate):
+                        attachments.append(candidate)
             description = meta.get('description') or ''
         except Exception:
             pass
@@ -89,10 +96,23 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
 
 
 def write_media_meta(base_path: str, attachments: List[str], description: str) -> None:
-    """Persist metadata for a stock entry."""
+    """Persist metadata for a stock entry.
+
+    Media paths are stored relative to the base path directory to keep the
+    bundle portable when it is moved to ``Sold``.
+    """
 
     meta_path = f"{base_path}.meta.json"
-    meta_payload = {'media': attachments, 'description': description}
+    base_dir = os.path.dirname(base_path)
+    media_entries: list[str] = []
+    for path in attachments:
+        if not path:
+            continue
+        try:
+            media_entries.append(os.path.relpath(path, base_dir))
+        except ValueError:
+            media_entries.append(os.path.basename(path))
+    meta_payload = {'media': media_entries, 'description': description}
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta_payload, f, ensure_ascii=False, indent=2)
 
