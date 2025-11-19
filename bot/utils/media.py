@@ -39,6 +39,19 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
         except Exception:
             pass
 
+    if not attachments:
+        folder = os.path.dirname(base_path)
+        if os.path.isdir(folder):
+            attachments = sorted(
+                [
+                    os.path.join(folder, f)
+                    for f in os.listdir(folder)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4'))
+                    and not f.endswith('.meta.json')
+                    and not f.endswith('.txt')
+                ]
+            )
+
     if not attachments and base_path and os.path.isfile(base_path):
         attachments = [base_path]
 
