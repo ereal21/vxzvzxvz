@@ -58,7 +58,11 @@ def load_media_bundle(value: str) -> Tuple[List[str], str]:
         try:
             with open(meta_path, encoding='utf-8') as f:
                 meta = json.load(f)
-            raw_media = meta.get('media', [])
+
+            raw_media = meta.get('media')
+            if raw_media is None:
+                raw_media = meta.get('attachments', [])
+
             attachments = _normalize_media_paths(base_path, raw_media)
             if len(attachments) < len(raw_media):
                 base_dir = os.path.dirname(base_path)

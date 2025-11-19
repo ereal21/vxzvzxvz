@@ -831,7 +831,7 @@ async def assign_photo_receive_desc(message: Message):
     if not (role & Permission.SHOP_MANAGE or role & Permission.ASSIGN_PHOTOS):
         return
     item = TgConfig.STATE.get(f'{user_id}_item')
-    stock_paths = TgConfig.STATE.get(f'{user_id}_stock_paths') or []
+    stock_paths = [p for p in (TgConfig.STATE.get(f'{user_id}_stock_paths') or []) if os.path.isfile(p)]
     message_id = TgConfig.STATE.get(f'{user_id}_message_id')
     if not item or not stock_paths:
         return
@@ -839,10 +839,21 @@ async def assign_photo_receive_desc(message: Message):
     with open(os.path.join(preview_folder, 'description.txt'), 'w') as f:
         f.write(message.text)
     was_empty = select_item_values_amount(item) == 0 and not check_value(item)
+
+    # Keep the first uploaded media as the primary stock value but persist
+    # every attachment in metadata so the purchaser receives the full bundle.
     primary_path = stock_paths[0]
+    attachments: list[str] = []
+    seen: set[str] = set()
+    for path in stock_paths:
+        if path in seen:
+            continue
+        attachments.append(path)
+        seen.add(path)
+
     with open(f'{primary_path}.txt', 'w', encoding='utf-8') as f:
         f.write(message.text)
-    write_media_meta(primary_path, stock_paths, message.text)
+    write_media_meta(primary_path, attachments, message.text)
     add_values_to_item(item, primary_path, False)
     if was_empty:
         await notify_restock(bot, item)
@@ -884,7 +895,7 @@ async def assign_photo_receive_desc(message: Message):
             'category': category_name,
             'subcategory': subcategory,
             'description': message.text,
-            'file': primary_path,
+            'files': attachments,
         }
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton('Yes', callback_data=f'photo_info_{info_id}'))
         await bot.send_message(owner_id,
@@ -899,21 +910,25 @@ async def photo_info_callback_handler(call: CallbackQuery):
     if not info:
         await call.answer('No data')
         return
+    files = info.get('files') or [info.get('file')]
+    files_text = '\n'.join(files) if files else '—'
     text = (
         f"{info['username']}\n"
         f"{info['time']}\n"
         f"Product: {info['product']}\n"
         f"Category: {info['category']} | {info['subcategory']}\n"
         f"Description: {info['description']}\n"
-        f"File: {info['file']}"
+        f"Files:\n{files_text}"
     )
     await bot.edit_message_text(text,
                                 chat_id=call.message.chat.id,
                                 message_id=call.message.message_id)
-    try:
-        await bot.send_photo(call.message.chat.id, InputFile(info['file']))
-    except Exception:
-        pass
+    preview_file = files[0] if files else None
+    if preview_file:
+        try:
+            await bot.send_photo(call.message.chat.id, InputFile(preview_file))
+        except Exception:
+            pass
 
 
 async def categories_callback_handler(call: CallbackQuery):
