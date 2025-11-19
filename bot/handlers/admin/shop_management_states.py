@@ -62,7 +62,7 @@ from bot.utils.stock_notify import notify_restock
 from bot.utils.media import write_media_meta
 
 
-from bot.utils.files import cleanup_item_file, get_next_file_path
+from bot.utils.files import cleanup_item_file, create_stock_folder, get_next_file_path
 from bot.database.models import Permission
 from bot.handlers.other import get_bot_user_ids
 from bot.keyboards import (
@@ -767,7 +767,11 @@ async def assign_photo_receive_media(message: Message):
     else:
         await bot.send_message(user_id, t(lang, 'assign_media_invalid'))
         return
-    stock_path = get_next_file_path(item, ext)
+    stock_folder = TgConfig.STATE.get(f'{user_id}_stock_folder')
+    if not stock_folder:
+        stock_folder = create_stock_folder(item)
+        TgConfig.STATE[f'{user_id}_stock_folder'] = stock_folder
+    stock_path = get_next_file_path(item, ext, folder=stock_folder)
     await file.download(destination_file=stock_path)
     stock_paths = TgConfig.STATE.get(f'{user_id}_stock_paths', [])
     stock_paths.append(stock_path)
@@ -817,6 +821,7 @@ async def assign_photo_cancel_handler(call: CallbackQuery):
         return
     category = TgConfig.STATE.pop(f'{user_id}_assign_category', None)
     stock_paths = TgConfig.STATE.pop(f'{user_id}_stock_paths', [])
+    TgConfig.STATE.pop(f'{user_id}_stock_folder', None)
     for file_path in stock_paths:
         cleanup_item_file(file_path)
     TgConfig.STATE.pop(f'{user_id}_item', None)
@@ -831,7 +836,7 @@ async def assign_photo_receive_desc(message: Message):
     if not (role & Permission.SHOP_MANAGE or role & Permission.ASSIGN_PHOTOS):
         return
     item = TgConfig.STATE.get(f'{user_id}_item')
-    stock_paths = TgConfig.STATE.get(f'{user_id}_stock_paths') or []
+    stock_paths = [p for p in (TgConfig.STATE.get(f'{user_id}_stock_paths') or []) if os.path.isfile(p)]
     message_id = TgConfig.STATE.get(f'{user_id}_message_id')
     if not item or not stock_paths:
         return
@@ -839,16 +844,28 @@ async def assign_photo_receive_desc(message: Message):
     with open(os.path.join(preview_folder, 'description.txt'), 'w') as f:
         f.write(message.text)
     was_empty = select_item_values_amount(item) == 0 and not check_value(item)
+
+    # Keep the first uploaded media as the primary stock value but persist
+    # every attachment in metadata so the purchaser receives the full bundle.
     primary_path = stock_paths[0]
+    attachments: list[str] = []
+    seen: set[str] = set()
+    for path in stock_paths:
+        if path in seen:
+            continue
+        attachments.append(path)
+        seen.add(path)
+
     with open(f'{primary_path}.txt', 'w', encoding='utf-8') as f:
         f.write(message.text)
-    write_media_meta(primary_path, stock_paths, message.text)
+    write_media_meta(primary_path, attachments, message.text)
     add_values_to_item(item, primary_path, False)
     if was_empty:
         await notify_restock(bot, item)
     lang = _get_lang(user_id)
     TgConfig.STATE[user_id] = None
     TgConfig.STATE.pop(f'{user_id}_stock_paths', None)
+    TgConfig.STATE.pop(f'{user_id}_stock_folder', None)
     TgConfig.STATE.pop(f'{user_id}_item', None)
     TgConfig.STATE.pop(f'{user_id}_assign_category', None)
     TgConfig.STATE.pop(f'{user_id}_message_id', None)
@@ -884,7 +901,7 @@ async def assign_photo_receive_desc(message: Message):
             'category': category_name,
             'subcategory': subcategory,
             'description': message.text,
-            'file': primary_path,
+            'files': attachments,
         }
         markup = InlineKeyboardMarkup().add(InlineKeyboardButton('Yes', callback_data=f'photo_info_{info_id}'))
         await bot.send_message(owner_id,
@@ -899,21 +916,25 @@ async def photo_info_callback_handler(call: CallbackQuery):
     if not info:
         await call.answer('No data')
         return
+    files = info.get('files') or [info.get('file')]
+    files_text = '\n'.join(files) if files else '—'
     text = (
         f"{info['username']}\n"
         f"{info['time']}\n"
         f"Product: {info['product']}\n"
         f"Category: {info['category']} | {info['subcategory']}\n"
         f"Description: {info['description']}\n"
-        f"File: {info['file']}"
+        f"Files:\n{files_text}"
     )
     await bot.edit_message_text(text,
                                 chat_id=call.message.chat.id,
                                 message_id=call.message.message_id)
-    try:
-        await bot.send_photo(call.message.chat.id, InputFile(info['file']))
-    except Exception:
-        pass
+    preview_file = files[0] if files else None
+    if preview_file:
+        try:
+            await bot.send_photo(call.message.chat.id, InputFile(preview_file))
+        except Exception:
+            pass
 
 
 async def categories_callback_handler(call: CallbackQuery):
